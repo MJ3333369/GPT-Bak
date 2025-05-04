@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="lv">
+<head>
+  <meta charset="UTF-8">
+  <title>GPT čatbots – Pārmeklēšanas algoritmi</title>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background-color: #f5f5f5; display: flex; height: 100vh; }
+    .sidebar { width: 240px; background-color: #e0e0e0; padding: 20px; box-sizing: border-box; border-right: 1px solid #ccc; }
+    .main { flex-grow: 1; padding: 20px; box-sizing: border-box; overflow-y: auto; }
+    select, input, button, textarea { width: 100%; font-size: 14px; margin-top: 10px; }
+    textarea { resize: vertical; }
+    pre { background: #fff; padding: 10px; border: 1px solid #ccc; white-space: pre-wrap; word-wrap: break-word; height: 60vh; overflow-y: auto; }
+    .hidden { display: none; }
+    #loading { margin-top: 10px; font-style: italic; color: #333; }
+    .dots::after { content: ''; display: inline-block; width: 1em; text-align: left; animation: dots 1s steps(3, end) infinite; }
+    @keyframes dots { 0% { content: ''; } 33% { content: '.'; } 66% { content: '..'; } 100% { content: '...'; } }
+    h2 { margin-top: 0; }
+  </style>
+</head>
+<body>
+
+  <div class="sidebar">
+    <h3>Iestatījumi</h3>
+    <label for="level">Zināšanu līmenis:</label>
+    <select id="level">
+      <option value="1">1 – Iesācējs</option>
+      <option value="2">2 – Vidējs</option>
+      <option value="3">3 – Pieredzējis</option>
+    </select>
+
+    <label for="language">Programmēšanas valoda:</label>
+    <input id="language" type="text" placeholder="Piemēram: Python, Java" />
+
+    <button id="resetBtn" class="hidden" onclick="resetChat()">Sākt no jauna</button>
+  </div>
+
+  <div class="main">
+    <h2>GPT čatbots – Pārmeklēšanas algoritmi</h2>
+    <h3>GPT atbildes:</h3>
+    <pre id="output"></pre>
+    <label for="input">Tavs jautājums:</label>
+    <textarea id="input" rows="3" placeholder="Uzdod jautājumu..."></textarea>
+    <button id="sendBtn" onclick="sendMessage()">Sūtīt</button>
+    <div id="loading" class="hidden">Atbilde tiek ģenerēta<span class="dots"></span></div>
+  </div>
+
+  <script>
+    let sessionId = null;
+    let messages = [];
+    let levelLocked = false;
+    let languageLocked = false;
+
+    function getUserId() {
+      let userId = localStorage.getItem("userId");
+      if (!userId) {
+        userId = crypto.randomUUID();
+        localStorage.setItem("userId", userId);
+      }
+      return userId;
+    }
+
+    async function postJSON(url, data) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data)
+      });
+      return res.json();
+    }
+
+    function appendOutput(who, message) {
+      const output = document.getElementById("output");
+      output.textContent += `${who}: ${message}\n\n`;
+      output.scrollTop = output.scrollHeight;
+    }
+
+    async function sendMessage() {
+      const sendButton = document.getElementById("sendBtn");
+      const loadingDiv = document.getElementById("loading");
+      sendButton.disabled = true;
+      loadingDiv.classList.remove("hidden");
+
+      const userInput = document.getElementById("input").value.trim();
+      const levelSelect = document.getElementById("level");
+      const languageInput = document.getElementById("language").value.trim();
+
+      if (!userInput || !languageInput) {
+        alert("Aizpildi visus laukus! - Programmēšanas valoda un tavs jautājums");
+        sendButton.disabled = false;
+        loadingDiv.classList.add("hidden");
+        return;
+      }
+
+      if (!levelLocked || !languageLocked) {
+        levelSelect.disabled = true;
+        document.getElementById("language").disabled = true;
+        document.getElementById("resetBtn").classList.remove("hidden");
+        levelLocked = true;
+        languageLocked = true;
+
+        const welcome = `Sveiki`;
+        messages.push({ role: "assistant", content: welcome });
+        appendOutput("GPT", welcome);
+
+        const startData = await postJSON("/api/start-session", {
+          userId: getUserId(),
+          levelNum: levelSelect.value,
+          languageInput
+        });
+        sessionId = startData.sessionId;
+      }
+
+      messages.push({ role: "user", content: userInput });
+
+      try {
+        const data = await postJSON("/api/chat", {
+          messages,
+          levelNum: levelSelect.value,
+          languageInput,
+          userId: getUserId(),
+          sessionId
+        });
+
+        const reply = data.reply || "[Nav atbildes]";
+        messages.push({ role: "assistant", content: reply });
+        appendOutput("Tu", userInput);
+        appendOutput("GPT", reply);
+      } catch (err) {
+        alert("❌ Kļūda, mēģini vēlreiz!");
+        console.error(err);
+      } finally {
+        document.getElementById("input").value = "";
+        sendButton.disabled = false;
+        loadingDiv.classList.add("hidden");
+      }
+    }
+
+    function resetChat() {
+      messages = [];
+      levelLocked = false;
+      languageLocked = false;
+
+      document.getElementById("output").textContent = "";
+      document.getElementById("input").value = "";
+      document.getElementById("language").value = "";
+      document.getElementById("level").disabled = false;
+      document.getElementById("language").disabled = false;
+      document.getElementById("resetBtn").classList.add("hidden");
+    }
+
+    window.addEventListener("load", async () => {
+      const userId = getUserId();
+      try {
+        const data = await postJSON("/api/load-session", { userId });
+
+        if (data.messages && data.messages.length > 0) {
+          messages = data.messages;
+          const output = document.getElementById("output");
+          output.textContent = "";
+
+          for (const msg of messages) {
+            const who = msg.role === "user" ? "Tu" : "GPT";
+            appendOutput(who, String(msg.content));
+          }
+
+          const levelSelect = document.getElementById("level");
+          const languageInput = document.getElementById("language");
+
+          if (data.level === "beginner") levelSelect.value = "1";
+          else if (data.level === "intermediate") levelSelect.value = "2";
+          else if (data.level === "advanced") levelSelect.value = "3";
+
+          languageInput.value = data.language;
+          sessionId = data.sessionId;
+
+          document.getElementById("resetBtn").classList.remove("hidden");
+          levelSelect.disabled = true;
+          languageInput.disabled = true;
+          levelLocked = true;
+          languageLocked = true;
+        }
+      } catch (err) {
+        console.error("Neizdevās ielādēt pēdējo sesiju:", err);
+      }
+    });
+  </script>
+</body>
+</html>

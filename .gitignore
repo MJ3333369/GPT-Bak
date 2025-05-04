@@ -1,0 +1,17 @@
+# Ignorē node_modules (pakotnes)
+node_modules/
+
+# Ignorē vides mainīgos
+.env
+
+# Ignorē debug žurnālus
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Ignorē OS specifiskos failus
+.DS_Store
+
+# Ignorē IDE iestatījumus
+.vscode/
+.idea/
