@@ -1,4 +1,5 @@
 const express = require("express");
+const rateLimit = require("express-rate-limit");
 const { v4: uuidv4 } = require('uuid');
 const { connectToDB } = require("./db");
 require("dotenv").config();
@@ -9,8 +10,21 @@ oracledb.fetchAsString = [oracledb.CLOB];
 const app = express();
 const port = process.env.PORT || 3000;
 
+const helmet = require("helmet");
+app.use(helmet());
+
 app.use(express.static("public"));
 app.use(express.json());
+
+
+// Rate limiter – max 100 pieprasījumi 15 minūtēs no vienas IP
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: 'Pārāk daudz pieprasījumu no šīs IP. Mēģini vēlreiz pēc 15 minūtēm.'
+});
+app.use('/api', apiLimiter);
+
 
 let dbAvailable = true;
 
@@ -36,17 +50,24 @@ function validateRequestBody(body) {
 async function withDB(callback) {
   let db;
   try {
+    console.log("🟢 [withDB] Mēģinu izveidot savienojumu ar DB...");
     db = await connectToDB();
+    console.log("✅ [withDB] Savienojums izveidots, izpildu callback...");
     await callback(db);
     await db.commit();
+    console.log("✅ [withDB] Commit izpildīts.");
   } catch (err) {
-    console.error("Savienojums ar DB neizdevās:", err);
+    console.error("❌ [withDB] Savienojums ar DB neizdevās:", err);
     dbAvailable = false;
     throw err;
   } finally {
-    if (db) await db.close();
+    if (db) {
+      await db.close();
+      console.log("🔒 [withDB] Savienojums ar DB aizvērts.");
+    }
   }
 }
+
 
 async function saveMessage(db, sessionId, role, content) {
   await db.execute(
@@ -56,8 +77,9 @@ async function saveMessage(db, sessionId, role, content) {
   );
 }
 
-// ✅ Start session
+// Start session
 app.post("/api/start-session", async (req, res) => {
+  console.log("📥 [API] /api/start-session pieprasījums saņemts ar body:", req.body);
   const validationError = validateRequestBody(req.body);
   if (validationError) return res.status(400).json({ error: `Datu validācijas kļūda: ${validationError}` });
 
@@ -67,6 +89,7 @@ app.post("/api/start-session", async (req, res) => {
   try {
     if (dbAvailable) {
       await withDB(async (db) => {
+        console.log("➡️ [start-session] Izpildu MERGE INTO USERS...");
         await db.execute(
           `MERGE INTO USERS u USING dual ON (u.User_ID = :user_id)
            WHEN NOT MATCHED THEN INSERT (User_ID, Language, Topic)
@@ -74,10 +97,14 @@ app.post("/api/start-session", async (req, res) => {
            WHEN MATCHED THEN UPDATE SET Language = :language, Topic = :topic`,
           { user_id: userId, language: languageInput, topic }
         );
+        console.log("✅ [start-session] MERGE INTO USERS izpildīts.");
+
+        console.log("➡️ [start-session] Izpildu INSERT INTO SESSIONS...");
         await db.execute(
           `INSERT INTO SESSIONS (Session_ID, User_ID, Created_At) VALUES (:session_id, :user_id, SYSTIMESTAMP)`,
           { session_id: newSessionId, user_id: userId }
         );
+        console.log("✅ [start-session] INSERT INTO SESSIONS izpildīts.");
       });
     }
     res.json({ sessionId: newSessionId, mode: dbAvailable ? "online" : "offline" });
@@ -87,8 +114,9 @@ app.post("/api/start-session", async (req, res) => {
   }
 });
 
-// ✅ Load last session + masteredTopics
+// Load last session + masteredTopics
 app.post("/api/load-session", async (req, res) => {
+  console.log("📥 [API] /api/load-session pieprasījums saņemts ar body:", req.body);
   const { userId } = req.body;
   if (typeof userId !== 'string') return res.status(400).json({ error: 'userId jābūt tekstam.' });
 
@@ -139,8 +167,9 @@ app.post("/api/load-session", async (req, res) => {
   }
 });
 
-// ✅ Chat endpoint
+// Chat endpoint
 app.post("/api/chat", async (req, res) => {
+  console.log("📥 [API] /api/chat pieprasījums saņemts ar body:", req.body);
   const validationError = validateRequestBody(req.body);
   if (validationError) return res.status(400).json({ error: `Datu validācijas kļūda: ${validationError}` });
 
@@ -239,8 +268,9 @@ Your responsibilities:
   }
 });
 
-// ✅ Generate test
+// Generate test
 app.post("/api/get-test", async (req, res) => {
+  console.log("📥 [API] /api/get-test pieprasījums saņemts ar body:", req.body);
   const { topic, languageInput } = req.body;
   if (typeof topic !== 'string' || typeof languageInput !== 'string') return res.status(400).json({ error: 'Nepieciešami topic un languageInput kā teksts.' });
 
@@ -268,8 +298,9 @@ Return only valid JSON: [{"question":"...","options":{"A":"...","B":"...","C":".
   }
 });
 
-// ✅ Submit test
+// Submit test
 app.post("/api/submit-test", async (req, res) => {
+  console.log("📥 [API] /api/submit-test pieprasījums saņemts ar body:", req.body);
   const { userId, topic, answers } = req.body;
   if (typeof userId !== 'string' || typeof topic !== 'string' || !Array.isArray(answers)) return res.status(400).json({ error: 'Nepieciešami userId, topic un answers.' });
 
