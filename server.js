@@ -18,46 +18,18 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-const levelMap = {
-  "1": "beginner",
-  "2": "intermediate",
-  "3": "advanced",
-};
-
 function validateRequestBody(body) {
-  const { messages, levelNum, languageInput, userId, sessionId, topic } = body;
-
+  const { messages, languageInput, userId, sessionId, topic } = body;
   if (messages) {
-    if (!Array.isArray(messages)) {
-      return 'messages jābūt masīvam.';
-    }
+    if (!Array.isArray(messages)) return 'messages jābūt masīvam.';
     for (const msg of messages) {
-      if (typeof msg.role !== 'string' || typeof msg.content !== 'string') {
-        return 'Katrā message jābūt role un content kā tekstam.';
-      }
+      if (typeof msg.role !== 'string' || typeof msg.content !== 'string') return 'Katrā message jābūt role un content kā tekstam.';
     }
   }
-
-  if (levelNum && isNaN(Number(levelNum))) {
-    return 'levelNum jābūt skaitlim vai skaitliskai virknei.';
-  }
-
-  if (languageInput && typeof languageInput !== 'string') {
-    return 'languageInput jābūt tekstam.';
-  }
-
-  if (userId && typeof userId !== 'string') {
-    return 'userId jābūt tekstam.';
-  }
-
-  if (sessionId && typeof sessionId !== 'string') {
-    return 'sessionId jābūt tekstam.';
-  }
-
-  if (topic && typeof topic !== 'string') {
-    return 'topic jābūt tekstam.';
-  }
-
+  if (languageInput && typeof languageInput !== 'string') return 'languageInput jābūt tekstam.';
+  if (userId && typeof userId !== 'string') return 'userId jābūt tekstam.';
+  if (sessionId && typeof sessionId !== 'string') return 'sessionId jābūt tekstam.';
+  if (topic && typeof topic !== 'string') return 'topic jābūt tekstam.';
   return null;
 }
 
@@ -78,25 +50,18 @@ async function withDB(callback) {
 
 async function saveMessage(db, sessionId, role, content) {
   await db.execute(
-    `INSERT INTO MESSAGES (Message_ID, Session_ID, Role, Content)
-     VALUES (:msg_id, :session_id, :role, :content)`,
-    {
-      msg_id: uuidv4(),
-      session_id: sessionId,
-      role,
-      content
-    }
+    `INSERT INTO MESSAGES (Message_ID, Session_ID, Role, Content, Created_At)
+     VALUES (:msg_id, :session_id, :role, :content, SYSTIMESTAMP)`,
+    { msg_id: uuidv4(), session_id: sessionId, role, content }
   );
 }
 
+// ✅ Start session
 app.post("/api/start-session", async (req, res) => {
   const validationError = validateRequestBody(req.body);
-  if (validationError) {
-    return res.status(400).json({ error: `Datu validācijas kļūda: ${validationError}` });
-  }
+  if (validationError) return res.status(400).json({ error: `Datu validācijas kļūda: ${validationError}` });
 
-  const { userId, levelNum, languageInput, topic } = req.body;
-  const level = levelMap[levelNum] || "beginner";
+  const { userId, languageInput, topic } = req.body;
   const newSessionId = uuidv4();
 
   try {
@@ -104,13 +69,13 @@ app.post("/api/start-session", async (req, res) => {
       await withDB(async (db) => {
         await db.execute(
           `MERGE INTO USERS u USING dual ON (u.User_ID = :user_id)
-           WHEN NOT MATCHED THEN INSERT (User_ID, knowledge_level, Language, Topic)
-           VALUES (:user_id, :knowledge_level, :language, :topic)
-           WHEN MATCHED THEN UPDATE SET knowledge_level = :knowledge_level, Language = :language, Topic = :topic`,
-          { user_id: userId, knowledge_level: level, language: languageInput, topic }
+           WHEN NOT MATCHED THEN INSERT (User_ID, Language, Topic)
+           VALUES (:user_id, :language, :topic)
+           WHEN MATCHED THEN UPDATE SET Language = :language, Topic = :topic`,
+          { user_id: userId, language: languageInput, topic }
         );
         await db.execute(
-          `INSERT INTO SESSIONS (Session_ID, User_ID) VALUES (:session_id, :user_id)`,
+          `INSERT INTO SESSIONS (Session_ID, User_ID, Created_At) VALUES (:session_id, :user_id, SYSTIMESTAMP)`,
           { session_id: newSessionId, user_id: userId }
         );
       });
@@ -122,82 +87,126 @@ app.post("/api/start-session", async (req, res) => {
   }
 });
 
+// ✅ Load last session + masteredTopics
 app.post("/api/load-session", async (req, res) => {
   const { userId } = req.body;
-
-  if (typeof userId !== 'string') {
-    return res.status(400).json({ error: 'userId jābūt tekstam.' });
-  }
+  if (typeof userId !== 'string') return res.status(400).json({ error: 'userId jābūt tekstam.' });
 
   try {
     if (dbAvailable) {
-      let sessionId, userInfo, messages;
+      let sessionId, userInfo, messages, masteredTopics = [];
       await withDB(async (db) => {
         const sessionRes = await db.execute(
-          `SELECT Session_ID FROM SESSIONS WHERE User_ID = :user_id ORDER BY CREATED_AT DESC FETCH FIRST 1 ROWS ONLY`,
+          `SELECT Session_ID FROM SESSIONS WHERE User_ID = :user_id ORDER BY Created_At DESC FETCH FIRST 1 ROWS ONLY`,
           { user_id: userId }
         );
-
-        if (sessionRes.rows.length === 0) {
-          return res.json({ messages: [], mode: "online" });
-        }
+        if (sessionRes.rows.length === 0) return res.json({ messages: [], mode: "online", masteredTopics: [] });
 
         sessionId = sessionRes.rows[0][0];
 
         const messagesRes = await db.execute(
-          `SELECT Role, Content FROM MESSAGES WHERE Session_ID = :session_id ORDER BY CREATED_AT`,
+          `SELECT Role, Content FROM MESSAGES WHERE Session_ID = :session_id ORDER BY Created_At`,
           { session_id: sessionId }
         );
-
         const userRes = await db.execute(
-          `SELECT knowledge_level, Language, Topic FROM USERS WHERE User_ID = :user_id`,
+          `SELECT Language, Topic FROM USERS WHERE User_ID = :user_id`,
+          { user_id: userId }
+        );
+        const progressRes = await db.execute(
+          `SELECT Topic FROM PROGRESS WHERE User_ID = :user_id AND Mastered = 1`,
           { user_id: userId }
         );
 
         userInfo = userRes.rows[0];
-        messages = messagesRes.rows.map(row => ({
-          role: String(row[0]),
-          content: String(row[1])
-        }));
+        messages = messagesRes.rows.map(row => ({ role: String(row[0]), content: String(row[1]) }));
+        masteredTopics = progressRes.rows.map(row => row[0]);
       });
 
       res.json({
         messages,
-        level: userInfo[0],
-        language: userInfo[1],
-        topic: userInfo[2],
+        language: userInfo[0],
+        topic: userInfo[1],
         sessionId,
+        masteredTopics,
         mode: "online"
       });
     } else {
-      res.json({ messages: [], mode: "offline" });
+      res.json({ messages: [], mode: "offline", masteredTopics: [] });
     }
   } catch (err) {
     console.error("Sesijas ielādes kļūda:", err);
-    res.json({ messages: [], mode: "offline" });
+    res.json({ messages: [], mode: "offline", masteredTopics: [] });
   }
 });
 
+// ✅ Chat endpoint
 app.post("/api/chat", async (req, res) => {
   const validationError = validateRequestBody(req.body);
-  if (validationError) {
-    return res.status(400).json({ error: `Datu validācijas kļūda: ${validationError}` });
+  if (validationError) return res.status(400).json({ error: `Datu validācijas kļūda: ${validationError}` });
+
+  const { messages, languageInput, userId, sessionId, topic } = req.body;
+
+  let masteredTopics = [];
+  let isCurrentTopicMastered = false;
+
+  if (dbAvailable) {
+    try {
+      await withDB(async (db) => {
+        const progressRes = await db.execute(
+          `SELECT Topic FROM PROGRESS WHERE User_ID = :user_id AND Mastered = 1`,
+          { user_id: userId }
+        );
+        masteredTopics = progressRes.rows.map(row => row[0]);
+        isCurrentTopicMastered = masteredTopics.includes(topic);
+      });
+    } catch (err) {
+      console.error("Kļūda iegūstot apgūtās tēmas:", err);
+    }
   }
 
-  const { messages, levelNum, languageInput, userId, sessionId, topic } = req.body;
-  const level = levelMap[levelNum] || "beginner";
+// Tēmu saistību kartējums
+const topicRelations = {
+  "Breadth-First Search": ["Depth-First Search"],
+  "Depth-First Search": ["Breadth-First Search"],
+  "Minimax": ["Alpha-Beta"],
+  "Alpha-Beta": ["Minimax"]
+};
 
-  const systemPrompt = `
-You are a strict and focused virtual tutor specialized only in ${topic}, you must help the student to understand and to programm the specific algorithm.
-Even if the student asks about other topics, you always bring the conversation back to ${topic}.
-The student is at the ${level} level and learning in ${languageInput}.
+const related = topicRelations[topic] || [];
+const relatedText = related.length > 0
+  ? `\nNote: ${topic} is closely related to: ${related.join(', ')}. Feel free to reference or compare with these topics where appropriate.`
+  : "";
+
+isCurrentTopicMastered = masteredTopics.includes(topic);
+
+const masteredText = masteredTopics.length > 0
+  ? `The student has already mastered the following topics: ${masteredTopics.join(', ')}.` +
+    (isCurrentTopicMastered
+      ? ` The current topic (${topic}) is already mastered. Do NOT explain it again from scratch. Instead, offer comparisons, deeper insights, or advanced questions to challenge understanding.`
+      : ` Since ${topic} may be related to some mastered topics, you are encouraged to explain it by comparing with those mastered topics, focusing on differences, nuances, and what is new.`)
+  : `The student has not yet mastered any topics.`;
+
+const systemPrompt = `
+${masteredText}${relatedText}
+
+You are a helpful and insightful virtual tutor specialized in ${topic}.
+You are allowed to reference or compare with any of the mastered topics (${masteredTopics.join(', ')}), even if they are not the current topic, to support deeper understanding.
+
+IMPORTANT:
+- If the student asks about ${topic} and it is already mastered, you MUST NOT explain ${topic} again from scratch.
+- Instead, you should offer comparisons, ask advanced questions, or provide challenging exercises.
+- If the student asks about other mastered topics, you may freely discuss them.
+- If the student asks about unmastered topics, politely inform them they have not mastered those yet and suggest first covering ${topic}.
+
+The student is learning in ${languageInput}.
+Please explain everything in Latvian.
+
 Your responsibilities:
 - NEVER provide complete or runnable code.
-- Always focus on breaking down ${topic} concepts into simple, logical steps.
-- Ask topic-specific questions before giving answers to encourage reflection.
-- Stay strictly within ${topic} and help through guided thinking, not copying.
+- Focus on breaking down ${topic} concepts into logical steps.
+- Encourage reflection with topic-specific or related-topic questions.
+- Always tailor explanations based on the student's mastered knowledge.
 `;
-
 
   const fullMessages = [{ role: "system", content: systemPrompt }, ...messages];
 
@@ -228,6 +237,63 @@ Your responsibilities:
     console.error("GPT kļūda:", error);
     res.json({ reply: "GPT kļūda: " + error.message, mode: dbAvailable ? "online" : "offline" });
   }
+});
+
+// ✅ Generate test
+app.post("/api/get-test", async (req, res) => {
+  const { topic, languageInput } = req.body;
+  if (typeof topic !== 'string' || typeof languageInput !== 'string') return res.status(400).json({ error: 'Nepieciešami topic un languageInput kā teksts.' });
+
+  try {
+    const prompt = `Generate a 5-question multiple-choice test for the topic "${topic}" in programming language ${languageInput}.
+Each question should have 4 random-shuffled options labeled A-D, and indicate which letter is correct.
+Return only valid JSON: [{"question":"...","options":{"A":"...","B":"...","C":"...","D":"..."},"correct":"B"}]
+`;
+    const response = await openai.chat.completions.create({
+      model: "gpt-4-turbo",
+      messages: [{ role: "system", content: prompt }],
+    });
+
+    console.log("GPT raw response:", response.choices[0].message.content);
+    try {
+      const test = JSON.parse(response.choices[0].message.content);
+      res.json({ test });
+    } catch (parseError) {
+      console.error("JSON parse error:", parseError);
+      res.status(500).json({ error: "GPT atgrieza nederīgu JSON." });
+    }
+  } catch (error) {
+    console.error("Kļūda ģenerējot testu:", error);
+    res.status(500).json({ error: "Kļūda ģenerējot testu." });
+  }
+});
+
+// ✅ Submit test
+app.post("/api/submit-test", async (req, res) => {
+  const { userId, topic, answers } = req.body;
+  if (typeof userId !== 'string' || typeof topic !== 'string' || !Array.isArray(answers)) return res.status(400).json({ error: 'Nepieciešami userId, topic un answers.' });
+
+  const correctCount = answers.filter(a => a.isCorrect).length;
+  const total = answers.length;
+  const passed = correctCount === total;
+
+  if (passed && dbAvailable) {
+    try {
+      await withDB(async (db) => {
+        await db.execute(
+          `MERGE INTO PROGRESS p USING dual ON (p.User_ID = :user_id AND p.Topic = :topic)
+           WHEN NOT MATCHED THEN INSERT (Progress_ID, User_ID, Topic, Mastered, Updated_At)
+           VALUES (:progress_id, :user_id, :topic, 1, SYSTIMESTAMP)
+           WHEN MATCHED THEN UPDATE SET Mastered = 1, Updated_At = SYSTIMESTAMP`,
+          { progress_id: uuidv4(), user_id: userId, topic: topic }
+        );
+      });
+    } catch (err) {
+      console.error("Kļūda saglabājot progresu:", err);
+    }
+  }
+
+  res.json({ result: passed ? "Passed" : "Failed", correct: correctCount, total });
 });
 
 app.listen(port, () => {

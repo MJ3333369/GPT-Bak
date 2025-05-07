@@ -9,15 +9,14 @@
     .main { flex-grow: 1; padding: 20px; box-sizing: border-box; overflow-y: auto; }
     select, input, button, textarea { width: 100%; font-size: 14px; margin-top: 10px; }
     textarea { resize: vertical; }
-    #output { background: #fff; padding: 10px; border: 1px solid #ccc; height: 60vh; overflow-y: auto; }
+    #output { background: #fff; padding: 10px; border: 1px solid #ccc; height: 40vh; overflow-y: auto; margin-bottom: 10px; }
     .user-message { background-color: #d0f0d0; padding: 8px; margin-bottom: 6px; border-left: 4px solid #4caf50; }
     .assistant-message { background-color: #e0e0ff; padding: 8px; margin-bottom: 6px; border-left: 4px solid #3f51b5; }
     .hidden { display: none; }
-    #loading { margin-top: 10px; font-style: italic; color: #333; }
-    .dots::after { content: ''; display: inline-block; width: 1em; text-align: left; animation: dots 1s steps(3, end) infinite; }
-    @keyframes dots { 0% { content: ''; } 33% { content: '.'; } 66% { content: '..'; } 100% { content: '...'; } }
     h2 { margin-top: 0; }
     #offlineBanner { background-color: #ffcccc; color: #900; padding: 10px; text-align: center; }
+    #testSection { background: #fff; padding: 10px; border: 1px solid #ccc; margin-top: 20px; }
+    .question { margin-bottom: 10px; }
   </style>
 </head>
 <body>
@@ -29,12 +28,6 @@
 <div style="display: flex; flex-grow: 1;">
   <div class="sidebar">
     <h3>Iestatījumi</h3>
-    <label for="level">Zināšanu līmenis:</label>
-    <select id="level">
-      <option value="1">1 – Iesācējs</option>
-      <option value="2">2 – Vidējs</option>
-      <option value="3">3 – Pieredzējis</option>
-    </select>
 
     <label for="language">Programmēšanas valoda:</label>
     <input id="language" type="text" placeholder="Piemēram: Python, Java" />
@@ -48,23 +41,32 @@
     </select>
 
     <button id="resetBtn" class="hidden" onclick="resetChat()">Sākt no jauna</button>
+    <button id="startTestBtn" onclick="startTest()">Sākt testu</button>
   </div>
 
   <div class="main">
-    <h2>GPT čatbots – Pārmeklēšanas algoritmi</h2>
-    <h3>GPT atbildes:</h3>
-    <div id="output"></div>
-    <label for="input">Tavs jautājums:</label>
-    <textarea id="input" rows="3" placeholder="Uzdod jautājumu..."></textarea>
-    <button id="sendBtn" onclick="sendMessage()">Sūtīt</button>
+    <div id="chatSection">
+      <h2>GPT čatbots – Pārmeklēšanas algoritmi</h2>
+      <h3>GPT atbildes:</h3>
+      <div id="output"></div>
+      <label for="input">Tavs jautājums:</label>
+      <textarea id="input" rows="3" placeholder="Uzdod jautājumu..."></textarea>
+      <button id="sendBtn" onclick="sendMessage()">Sūtīt</button>
+    </div>
+
+    <div id="testSection" class="hidden">
+      <h3>Tests par tēmu</h3>
+      <div id="testQuestions"></div>
+      <button onclick="submitTest()">Iesniegt testu</button>
+    </div>
   </div>
 </div>
 
 <script>
 let sessionId = null;
 let messages = [];
-let levelLocked = false;
 let languageLocked = false;
+let currentTest = [];
 
 function getUserId() {
   let userId = localStorage.getItem("userId");
@@ -90,21 +92,47 @@ async function postJSON(url, data) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data)
     });
-    const json = await res.json();
-
-    if (json.mode === "offline") {
-      showOfflineBanner();
-    } else {
-      hideOfflineBanner();
-    }
-
-    return json;
+    return await res.json();
   } catch (err) {
     console.error("Tīkla kļūda:", err);
     showOfflineBanner();
     return { mode: "offline" };
   }
 }
+
+window.addEventListener("load", async () => {
+  const userId = getUserId();
+  try {
+    const data = await postJSON("/api/load-session", { userId });
+
+    if (data.messages && data.messages.length > 0) {
+      messages = data.messages;
+      const output = document.getElementById("output");
+      output.textContent = "";
+
+      for (const msg of messages) {
+        const who = msg.role === "user" ? "Tu" : "GPT";
+        appendOutput(who, String(msg.content));
+      }
+
+      const languageInput = document.getElementById("language");
+      const topicSelect = document.getElementById("topic");
+
+      languageInput.value = data.language || "";
+      topicSelect.value = data.topic || "";
+
+      sessionId = data.sessionId;
+
+      document.getElementById("resetBtn").classList.remove("hidden");
+      languageInput.disabled = true;
+      topicSelect.disabled = true;
+      languageLocked = true;
+    }
+  } catch (err) {
+    console.error("Neizdevās ielādēt pēdējo sesiju:", err);
+    showOfflineBanner();
+  }
+});
 
 function appendOutput(who, message) {
   const output = document.getElementById("output");
@@ -120,7 +148,6 @@ async function sendMessage() {
   sendButton.disabled = true;
 
   const userInput = document.getElementById("input").value.trim();
-  const levelSelect = document.getElementById("level");
   const languageInput = document.getElementById("language").value.trim();
   const topic = document.getElementById("topic").value.trim();
 
@@ -130,17 +157,14 @@ async function sendMessage() {
     return;
   }
 
-  if (!levelLocked || !languageLocked) {
-    levelSelect.disabled = true;
+  if (!languageLocked) {
     document.getElementById("language").disabled = true;
     document.getElementById("topic").disabled = true;
     document.getElementById("resetBtn").classList.remove("hidden");
-    levelLocked = true;
     languageLocked = true;
 
     const startData = await postJSON("/api/start-session", {
       userId: getUserId(),
-      levelNum: levelSelect.value,
       languageInput,
       topic
     });
@@ -152,15 +176,12 @@ async function sendMessage() {
 
   const output = document.getElementById("output");
   const loadingDiv = document.createElement("div");
-  loadingDiv.id = "loadingMessage";
-  loadingDiv.innerHTML = `<em>Atbilde tiek ģenerēta<span class="dots"></span></em>`;
+  loadingDiv.innerHTML = `<em>Atbilde tiek ģenerēta...</em>`;
   output.appendChild(loadingDiv);
-  loadingDiv.scrollIntoView({ behavior: "smooth" });
 
   try {
     const data = await postJSON("/api/chat", {
       messages,
-      levelNum: levelSelect.value,
       languageInput,
       userId: getUserId(),
       sessionId,
@@ -182,57 +203,66 @@ async function sendMessage() {
   }
 }
 
-window.addEventListener("load", async () => {
-  const userId = getUserId();
-  try {
-    const data = await postJSON("/api/load-session", { userId });
-
-    if (data.messages && data.messages.length > 0) {
-      messages = data.messages;
-      const output = document.getElementById("output");
-      output.textContent = "";
-
-      for (const msg of messages) {
-        const who = msg.role === "user" ? "Tu" : "GPT";
-        appendOutput(who, String(msg.content));
-      }
-
-      const levelSelect = document.getElementById("level");
-      const languageInput = document.getElementById("language");
-      const topicSelect = document.getElementById("topic");
-
-      if (data.level === "beginner") levelSelect.value = "1";
-      else if (data.level === "intermediate") levelSelect.value = "2";
-      else if (data.level === "advanced") levelSelect.value = "3";
-
-      languageInput.value = data.language || "";
-      topicSelect.value = data.topic || "";
-
-      sessionId = data.sessionId;
-
-      document.getElementById("resetBtn").classList.remove("hidden");
-      levelSelect.disabled = true;
-      languageInput.disabled = true;
-      topicSelect.disabled = true;
-      levelLocked = true;
-      languageLocked = true;
-    }
-  } catch (err) {
-    console.error("Neizdevās ielādēt pēdējo sesiju:", err);
-    showOfflineBanner();
+async function startTest() {
+  const topic = document.getElementById("topic").value.trim();
+  const languageInput = document.getElementById("language").value.trim();
+  if (!topic || !languageInput) {
+    alert("Izvēlies tēmu un ievadi prog. valodu");
+    return;
   }
-});
+
+  const res = await postJSON("/api/get-test", { topic, languageInput });
+  if (res.test) {
+    document.getElementById("chatSection").classList.add("hidden");
+    document.getElementById("testSection").classList.remove("hidden");
+
+    currentTest = res.test;
+    const testDiv = document.getElementById("testQuestions");
+    testDiv.innerHTML = "";
+    currentTest.forEach((q, idx) => {
+      const qDiv = document.createElement("div");
+      qDiv.classList.add("question");
+      qDiv.innerHTML = `<strong>${idx + 1}. ${q.question}</strong><br>` +
+        Object.entries(q.options).map(([key, text]) =>
+          `<label><input type="radio" name="q${idx}" value="${key}"> ${key}: ${text}</label><br>`
+        ).join("");
+      testDiv.appendChild(qDiv);
+    });
+  } else {
+    alert("Neizdevās ielādēt testu.");
+  }
+}
+
+async function submitTest() {
+  const answers = currentTest.map((q, idx) => {
+    const selected = document.querySelector(`input[name="q${idx}"]:checked`);
+    return {
+      question: q.question,
+      selected: selected ? selected.value : null,
+      isCorrect: selected ? selected.value === q.correct : false
+    };
+  });
+
+  const res = await postJSON("/api/submit-test", {
+    userId: getUserId(),
+    topic: document.getElementById("topic").value.trim(),
+    answers
+  });
+
+  alert(`Rezultāts: ${res.result}\nPareizas atbildes: ${res.correct}/${res.total}`);
+
+  document.getElementById("testSection").classList.add("hidden");
+  document.getElementById("chatSection").classList.remove("hidden");
+}
 
 function resetChat() {
   messages = [];
-  levelLocked = false;
   languageLocked = false;
 
   document.getElementById("output").textContent = "";
   document.getElementById("input").value = "";
   document.getElementById("language").value = "";
   document.getElementById("topic").value = "";
-  document.getElementById("level").disabled = false;
   document.getElementById("language").disabled = false;
   document.getElementById("topic").disabled = false;
   document.getElementById("resetBtn").classList.add("hidden");

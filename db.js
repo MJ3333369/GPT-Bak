@@ -1,16 +1,18 @@
-// db.js
 require('dotenv').config();
 
+process.env.TNS_ADMIN = process.env.WALLET_DIR;  // ← ŠIS PIRMS initOracleClient
 
 const oracledb = require('oracledb');
+oracledb.initOracleClient({ libDir: 'C:/ORCLinstance/instantclient_19_26' });
 
 async function connectToDB() {
   try {
     const connection = await oracledb.getConnection({
-      user: process.env.DB_USERNAME, // jauztaisa cits lietotajs
-      password: process.env.DB_PASSWORD, // šos vajag parlikt .env failā
+      user: process.env.DB_USERNAME,
+      password: process.env.DB_PASSWORD,
       connectString: process.env.DB_CONNECT
     });
+
     console.log('Savienojums ar Oracle izdevās');
     return connection;
   } catch (err) {
@@ -18,5 +20,5 @@ async function connectToDB() {
     throw err;
   }
 }
-  
+
 module.exports = { connectToDB };
