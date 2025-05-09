@@ -44,11 +44,11 @@ async function postJSON(url, data) {
 
 
 function showLoadingSession() {
-  document.getElementById("loadingOverlay").classList.remove("hidden");
+  document.getElementById("loadingOverlay").classList.add("show");
 }
 
 function hideLoadingSession() {
-  document.getElementById("loadingOverlay").classList.add("hidden");
+  document.getElementById("loadingOverlay").classList.remove("show");
 }
 
 function startConfetti() {

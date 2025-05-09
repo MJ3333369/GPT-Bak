@@ -7,9 +7,25 @@
   <style>
 
       #loadingOverlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(255, 255, 255, 0.8);
+        font-size: 20px;
+        font-weight: bold;
+        color: #333;
+        z-index: 999;
+        display: none;  /* ← defaultā slēgts */
         align-items: center;
         justify-content: center;
       }
+
+      #loadingOverlay.show {
+        display: flex;
+      }
+
       #crownIcon {
         position: absolute;
         top: 255px;
@@ -134,10 +150,7 @@
   Savienojums ar datubāzi nav pieejams – saruna netiek saglabāta!
 </div>
 
-<div id="loadingOverlay" class="hidden" style="
-  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-  background: rgba(255, 255, 255, 0.8);
-  font-size: 20px; font-weight: bold; color: #333; z-index: 999;">
+<div id="loadingOverlay" class="hidden">
   Ielādē sesiju...
 </div>
 
