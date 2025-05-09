@@ -20,7 +20,7 @@ app.use(express.json());
 // Rate limiter – max 100 pieprasījumi 15 minūtēs no vienas IP
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 50,
   message: 'Pārāk daudz pieprasījumu no šīs IP. Mēģini vēlreiz pēc 15 minūtēm.'
 });
 app.use('/api', apiLimiter);

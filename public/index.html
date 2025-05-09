@@ -5,6 +5,20 @@
   <title>GPT čatbots – Pārmeklēšanas algoritmi</title>
   <script src="js/confetti.browser.min.js"></script>
   <style>
+
+      #loadingOverlay {
+        align-items: center;
+        justify-content: center;
+      }
+      #crownIcon {
+        position: absolute;
+        top: 255px;
+        left: 12.5px;
+        width: 20px;
+        display: none;
+        transform: rotate(-30deg);
+        z-index: 10;
+      }
     body {
       margin: 0;
       font-family: Arial, sans-serif;
@@ -20,6 +34,7 @@
       padding: 20px;
       box-sizing: border-box;
       border-right: 1px solid #ccc;
+      position: relative;
     }
     .main {
       flex-grow: 1;
@@ -119,6 +134,14 @@
   Savienojums ar datubāzi nav pieejams – saruna netiek saglabāta!
 </div>
 
+<div id="loadingOverlay" class="hidden" style="
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(255, 255, 255, 0.8);
+  font-size: 20px; font-weight: bold; color: #333; z-index: 999;">
+  Ielādē sesiju...
+</div>
+
+
 <div style="display: flex; flex-grow: 1;">
   <div class="sidebar">
     <h3>Iestatījumi</h3>
@@ -138,9 +161,23 @@
     <button id="startTestBtn">Pildīt testu par izvēlēto tēmu</button>
 
     <h3>Apgūtās tēmas:</h3>
+    <img id="crownIcon" src="images/kron.png" alt="Kronītis">
     <ul id="masteredList">
       <li>(Nav apgūtu tēmu)</li>
     </ul>
+
+    <button id="toggleUserIdSection">Rādīt/Slēpt lietotāja kodu</button>
+
+    <div id="userIdSection">
+      <h3>Tavs lietotāja kods:</h3>
+      <p id="displayUserId"></p>
+      <small>Ja nākamreiz pieslēdzies no citas ierīces, nokopē šo kodu. Tā ir Tava “atslēga”!</small>
+
+      <label for="inputUserId">Ievadi savu lietotāja kodu, lai atjaunotu sesiju no citas ierīces:</label>
+      <input id="inputUserId" type="text" placeholder="Ievadi lietotāja ID">
+      <button id="btnSetUserId">Ielādēt lietotāja datus</button>
+    </div>
+
   </div>
 
   <div class="main">
