@@ -28,7 +28,7 @@
 
       #crownIcon {
         position: absolute;
-        top: 255px;
+        top: 253px;
         left: 12.5px;
         width: 20px;
         display: none;
@@ -162,16 +162,12 @@
     <label for="language">Programmēšanas valoda:</label>
     <input id="language" type="text" placeholder="Piemēram: Python, Java" />
 
-    <label for="topic">Algoritma tēma:</label>
-    <select id="topic">
-      <option value="Breadth-First Search">Platuma pārlase (BFS)</option>
-      <option value="Depth-First Search">Dziļuma pārlase (DFS)</option>
-      <option value="Minimax">Minimax algoritms</option>
-      <option value="Alpha-Beta">Alpha-Beta apgriešana</option>
-    </select>
+    <label for="topic">Izvēlies algoritma tēmu:</label>
+
+    <select id="topic"></select>
 
     <button id="resetBtn" class="hidden">Sākt sarunu no jauna</button>
-    <button id="startTestBtn">Pildīt testu par izvēlēto tēmu</button>
+    <button id="startTestBtn" class="hidden">Pildīt testu par izvēlēto tēmu</button>
 
     <h3>Apgūtās tēmas:</h3>
     <img id="crownIcon" src="images/kron.png" alt="Kronītis">
@@ -184,8 +180,8 @@
     <div id="userIdSection">
       <h3>Tavs lietotāja kods:</h3>
       <p id="displayUserId"></p>
-      <small>Ja nākamreiz pieslēdzies no citas ierīces, nokopē šo kodu. Tā ir Tava “atslēga”!</small>
-
+      <small>Ja nākamreiz plāno pieslēgties no citas ierīces, tad saglabā augstāk norādīto lietotāja kodu.</small>
+      <p>  </p>
       <label for="inputUserId">Ievadi savu lietotāja kodu, lai atjaunotu sesiju no citas ierīces:</label>
       <input id="inputUserId" type="text" placeholder="Ievadi lietotāja ID">
       <button id="btnSetUserId">Ielādēt lietotāja datus</button>

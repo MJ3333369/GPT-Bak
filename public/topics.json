@@ -1,0 +1,27 @@
+{
+    "topics": [
+      { "id": "Game Tree", "lv": "Spēles koka datu struktūra" },
+      { "id": "Breadth-First Search", "lv": "Pārmeklēšana plašumā" },
+      { "id": "Bidirectional Breadth-First Search", "lv": "Divvirzienu pārmeklēšana plašumā" },
+      { "id": "Depth-First Search", "lv": "Pārmeklēšana dziļumā" },
+      { "id": "Depth-Limited Search", "lv": "Pārmeklēšana dziļumā ar ierobežotu dziļumu" },
+      { "id": "Minimax", "lv": "MiniMax algoritms" },
+      { "id": "Alpha-Beta", "lv": "Alfa-beta apgriešana" },
+      { "id": "Hill Climbing", "lv": "Kalnā kāpšana" },
+      { "id": "Best-First Search", "lv": "Vislabākā stāvokļa meklēšana" },
+      { "id": "A* Search", "lv": "Starveida pārmeklēšana" }
+    ],
+    "relations": {
+      "Breadth-First Search": ["Depth-First Search", "Bidirectional Breadth-First Search"],
+      "Depth-First Search": ["Breadth-First Search", "Depth-Limited Search"],
+      "Depth-Limited Search": ["Depth-First Search"],
+      "Bidirectional Breadth-First Search": ["Breadth-First Search"],
+      "Hill Climbing": ["Best-First Search", "A* Search"],
+      "Best-First Search": ["Hill Climbing", "A* Search"],
+      "A* Search": ["Best-First Search", "Hill Climbing"],
+      "Minimax": ["Alpha-Beta"],
+      "Alpha-Beta": ["Minimax"],
+      "Game Tree": ["Minimax", "Alpha-Beta"]
+    }
+  }
+  

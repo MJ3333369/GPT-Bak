@@ -3,28 +3,101 @@ let messages = [];
 let languageLocked = false;
 let currentTest = [];
 
-const allTopics = [
-  "Breadth-First Search",
-  "Depth-First Search",
-  "Minimax",
-  "Alpha-Beta"
-];
+// ========================== PALĪGFUNKCIJAS ============================
 
-function getUserId() {
-  let userId = localStorage.getItem("userId");
-  if (!userId) {
-    userId = crypto.randomUUID();
-    localStorage.setItem("userId", userId);
+// Apgūto tēmu saraksta aizpildīšana
+function populateMasteredTopics(topics) {
+  const masteredList = document.getElementById("masteredList");
+  masteredList.textContent = "";
+  if (topics && topics.length > 0) {
+    for (const topic of topics) {
+      const li = document.createElement("li");
+      li.textContent = topic;
+      masteredList.appendChild(li);
+    }
+  } else {
+    const li = document.createElement("li");
+    li.textContent = "(Nav apgūtu tēmu)";
+    masteredList.appendChild(li);
   }
-  return userId;
+  updateCrownDisplay(topics, window.allTopics);
 }
 
-function showOfflineBanner() {
-  document.getElementById("offlineBanner").classList.remove("hidden");
+// Ielādes pārklājuma parādīšana/slēpšana
+function toggleLoading(isVisible) {
+  const overlay = document.getElementById("loadingOverlay");
+  overlay.classList.toggle("show", isVisible);
 }
 
-function hideOfflineBanner() {
-  document.getElementById("offlineBanner").classList.add("hidden");
+// Bezsaistes brīdinājuma parādīšana/slēpšana
+function toggleOfflineBanner(isVisible) {
+  const banner = document.getElementById("offlineBanner");
+  banner.classList.toggle("hidden", !isVisible);
+}
+
+// UI pārslēgšana testa režīmā
+function enterTestMode() {
+  document.getElementById("chatSection").classList.add("hidden");
+  document.getElementById("testSection").classList.remove("hidden");
+  document.querySelectorAll("button").forEach(btn => btn.disabled = true);
+}
+
+function exitTestMode() {
+  document.getElementById("testSection").classList.add("hidden");
+  document.getElementById("chatSection").classList.remove("hidden");
+  document.querySelectorAll("button").forEach(btn => btn.disabled = false);
+}
+
+// Ievadlauku iegūšana
+function getSelectedLanguageAndTopic() {
+  const language = document.getElementById("language").value.trim();
+  const topic = document.getElementById("topic").value.trim();
+  return { language, topic };
+}
+
+// Validācija
+function validateRequiredFields(fields) {
+  for (const [name, value] of Object.entries(fields)) {
+    if (!value) {
+      alert(`Lauks "${name}" ir obligāti jāaizpilda!`);
+      return false;
+    }
+  }
+  return true;
+}
+
+function startConfetti() {
+  confetti({
+    particleCount: 150,
+    spread: 70,
+    origin: { y: 0.6 }
+  });
+}
+
+function updateCrownDisplay(masteredTopics, allTopics) {
+  const allMastered = allTopics.every(t => masteredTopics.includes(t));
+  const crownIcon = document.getElementById("crownIcon");
+  if (allMastered) {
+    crownIcon.style.display = "block";
+    if (!localStorage.getItem('crownCelebrated')) {
+      startConfetti();
+      alert("Apsveicam! Tu esi apguvis VISAS tēmas! 🎉");
+      localStorage.setItem('crownCelebrated', 'true');
+    }
+  } else {
+    crownIcon.style.display = "none";
+    localStorage.removeItem('crownCelebrated');
+  }
+}
+
+function appendOutput(who, message) {
+  const output = document.getElementById("output");
+  const messageDiv = document.createElement("div");
+  messageDiv.classList.add(who === "Tu" ? "user-message" : "assistant-message");
+  const formattedMessage = message.replace(/\n/g, "<br>");
+  messageDiv.innerHTML = `<strong>${who}:</strong> ${formattedMessage}`;
+  output.appendChild(messageDiv);
+  output.scrollTop = output.scrollHeight;
 }
 
 async function postJSON(url, data) {
@@ -37,133 +110,87 @@ async function postJSON(url, data) {
     return await res.json();
   } catch (err) {
     console.error("Tīkla kļūda:", err);
-    showOfflineBanner();
+    toggleOfflineBanner(true);
     return { mode: "offline" };
   }
 }
 
-
-function showLoadingSession() {
-  document.getElementById("loadingOverlay").classList.add("show");
-}
-
-function hideLoadingSession() {
-  document.getElementById("loadingOverlay").classList.remove("show");
-}
-
-function startConfetti() {
-  confetti({
-    particleCount: 150,
-    spread: 70,
-    origin: { y: 0.6 }
-  });
-}
-
-function updateCrownDisplay(masteredTopics) {
-  const allMastered = allTopics.every(t => masteredTopics.includes(t));
-  const crownIcon = document.getElementById("crownIcon");
-
-  if (allMastered) {
-    crownIcon.style.display = "block";
-
-    // Tikai pirmajā reizē rādam alert un konfeti
-    if (!localStorage.getItem('crownCelebrated')) {
-      startConfetti();
-      alert("Apsveicam! Tu esi apguvis VISAS tēmas! 🎉");
-      localStorage.setItem('crownCelebrated', 'true');
-    }
-
-  } else {
-    crownIcon.style.display = "none";
-    localStorage.removeItem('crownCelebrated'); // Ja zaudē statusu, atkal atļaujam nākotnē
+function getUserId() {
+  let userId = localStorage.getItem("userId");
+  if (!userId) {
+    userId = crypto.randomUUID();
+    localStorage.setItem("userId", userId);
   }
+  return userId;
 }
 
+// ========================== GALVENĀ IELĀDE ============================
 
-// Ielādējam sesiju
 window.addEventListener("load", async () => {
-  const userId = getUserId();
+  const response = await fetch("/topics.json");
+  const topicsData = await response.json();
+  window.allTopics = topicsData.topics.map(t => t.id);
+  window.topicRelations = topicsData.relations;
 
-  showLoadingSession();  // sākumā parādām overlay
+  const topicSelect = document.getElementById("topic");
+  topicsData.topics.forEach(t => {
+    const opt = document.createElement("option");
+    opt.value = t.id;
+    opt.textContent = t.lv;
+    topicSelect.appendChild(opt);
+  });
+
+  const userId = getUserId();
+  toggleLoading(true);
 
   try {
     const data = await postJSON("/api/load-session", { userId });
 
     if (data.messages && data.messages.length > 0) {
       messages = data.messages;
-      const output = document.getElementById("output");
-      output.textContent = "";
-
+      document.getElementById("output").textContent = "";
       for (const msg of messages) {
         const who = msg.role === "user" ? "Tu" : "GPT";
         appendOutput(who, String(msg.content));
       }
 
-      const languageInput = document.getElementById("language");
-      const topicSelect = document.getElementById("topic");
-
-      languageInput.value = data.language || "";
+      document.getElementById("language").value = data.language || "";
       topicSelect.value = data.topic || "";
-
       sessionId = data.sessionId;
+      console.log("sessionId:", sessionId);
 
       document.getElementById("resetBtn").classList.remove("hidden");
-      languageInput.disabled = true;
+      document.getElementById("language").disabled = true;
       topicSelect.disabled = true;
       languageLocked = true;
 
-      const masteredList = document.getElementById("masteredList");
-      masteredList.textContent = "";
+      populateMasteredTopics(data.masteredTopics);
 
-      if (data.masteredTopics && data.masteredTopics.length > 0) {
-        data.masteredTopics.forEach(topic => {
-          const li = document.createElement("li");
-          li.textContent = topic;
-          masteredList.appendChild(li);
-        });
-      } else {
-        const li = document.createElement("li");
-        li.textContent = "(Nav apgūtu tēmu)";
-        masteredList.appendChild(li);
-      }
-
-      updateCrownDisplay(data.masteredTopics);
-
+      document.getElementById("startTestBtn").classList.remove("hidden");
     } else {
-      updateCrownDisplay([]);  // ja nav ziņu, paslēp kronīti
+      populateMasteredTopics([]);
     }
 
   } catch (err) {
-    console.error("Neizdevās ielādēt pēdējo sesiju:", err);
-    showOfflineBanner();
+    console.error("Neizdevās ielādēt sesiju:", err);
+    toggleOfflineBanner(true);
   } finally {
-    hideLoadingSession();  // ✅ ŠEIT IR OBLIGĀTI jābūt!
+    toggleLoading(false);
   }
 });
 
+// ========================== EVENT HANDLERI ============================
 
-
-function appendOutput(who, message) {
-  const output = document.getElementById("output");
-  const messageDiv = document.createElement("div");
-  messageDiv.classList.add(who === "Tu" ? "user-message" : "assistant-message");
-  messageDiv.textContent = `${who}: ${message}`;
-  output.appendChild(messageDiv);
-  output.scrollTop = output.scrollHeight;
-}
-
-async function sendMessage() {
+document.getElementById("sendBtn").addEventListener("click", async () => {
   const sendButton = document.getElementById("sendBtn");
   const startTestButton = document.getElementById("startTestBtn");
   sendButton.disabled = true;
   startTestButton.disabled = true;
 
   const userInput = document.getElementById("input").value.trim();
-  const languageInput = document.getElementById("language").value.trim();
-  const topic = document.getElementById("topic").value.trim();
+  const { language, topic } = getSelectedLanguageAndTopic();
 
-  if (!userInput || !languageInput || !topic) {
-    alert("Aizpildi visus laukus!");
+  if (!validateRequiredFields({ "Programmēšanas valoda": language, "Tēma": topic, "Ziņojums": userInput })) {
     sendButton.disabled = false;
     return;
   }
@@ -173,10 +200,9 @@ async function sendMessage() {
     document.getElementById("topic").disabled = true;
     document.getElementById("resetBtn").classList.remove("hidden");
     languageLocked = true;
-
     const startData = await postJSON("/api/start-session", {
       userId: getUserId(),
-      languageInput,
+      languageInput: language,
       topic
     });
     sessionId = startData.sessionId;
@@ -185,25 +211,27 @@ async function sendMessage() {
   messages.push({ role: "user", content: userInput });
   appendOutput("Tu", userInput);
 
-  const output = document.getElementById("output");
   const loadingDiv = document.createElement("div");
   loadingDiv.innerHTML = `<em>Atbilde tiek ģenerēta...</em>`;
-  output.appendChild(loadingDiv);
+  document.getElementById("output").appendChild(loadingDiv);
 
   try {
     const data = await postJSON("/api/chat", {
-      messages,
-      languageInput,
+      messages: [{ role: "user", content: userInput }],
+      languageInput: language,
       userId: getUserId(),
       sessionId,
       topic
     });
 
     loadingDiv.remove();
-
     const reply = data.reply || "[Nav atbildes]";
     messages.push({ role: "assistant", content: reply });
     appendOutput("GPT", reply);
+
+    const btn = document.getElementById("startTestBtn");
+    btn.classList.remove("hidden");
+
   } catch (err) {
     loadingDiv.remove();
     alert("Kļūda!");
@@ -213,32 +241,18 @@ async function sendMessage() {
     sendButton.disabled = false;
     startTestButton.disabled = false;
   }
-}
+});
 
-async function startTest() {
-  const topic = document.getElementById("topic").value.trim();
-  const languageInput = document.getElementById("language").value.trim();
+document.getElementById("startTestBtn").addEventListener("click", async () => {
+  const { language, topic } = getSelectedLanguageAndTopic();
+  if (!validateRequiredFields({ "Programmēšanas valoda": language, "Tēma": topic })) return;
 
-  if (!topic || !languageInput) {
-    alert("Izvēlies tēmu un ievadi prog. valodu");
-    return;
-  }
-
-  document.getElementById("language").disabled = true;
-  document.getElementById("topic").disabled = true;
-
-  document.getElementById("chatSection").classList.add("hidden");
-  document.getElementById("testSection").classList.remove("hidden");
-
+  enterTestMode();
   const testDiv = document.getElementById("testQuestions");
   testDiv.innerHTML = "<p style='font-style: italic;'>Tests tiek ģenerēts, lūdzu uzgaidi...</p>";
-
-  document.querySelectorAll("button").forEach(btn => btn.disabled = true);
-
   await new Promise(requestAnimationFrame);
 
-  const res = await postJSON("/api/get-test", { topic, languageInput });
-
+  const res = await postJSON("/api/get-test", { topic, languageInput: language });
   if (res.test) {
     currentTest = res.test;
     testDiv.innerHTML = "";
@@ -251,16 +265,14 @@ async function startTest() {
         ).join("");
       testDiv.appendChild(qDiv);
     });
-
-    document.querySelectorAll("button").forEach(btn => btn.disabled = true);
     document.getElementById("submitTestBtn").disabled = false;
   } else {
     alert("Neizdevās ielādēt testu.");
-    document.querySelectorAll("button").forEach(btn => btn.disabled = false);
+    exitTestMode();
   }
-}
+});
 
-async function submitTest() {
+document.getElementById("submitTestBtn").addEventListener("click", async () => {
   const answers = currentTest.map((q, idx) => {
     const selected = document.querySelector(`input[name="q${idx}"]:checked`);
     return {
@@ -277,40 +289,19 @@ async function submitTest() {
   });
 
   alert(`Rezultāts: ${res.result}\nPareizas atbildes: ${res.correct}/${res.total}`);
-
   await reloadMasteredTopics();
-
-  document.getElementById("testSection").classList.add("hidden");
-  document.getElementById("chatSection").classList.remove("hidden");
-  document.querySelectorAll("button").forEach(btn => btn.disabled = false);
-}
+  exitTestMode();
+});
 
 async function reloadMasteredTopics() {
   const data = await postJSON("/api/load-session", { userId: getUserId() });
-  console.log("✅ reloadMasteredTopics saņēma:", data.masteredTopics);
-
-  const masteredList = document.getElementById("masteredList");
-  masteredList.textContent = "";
-
-  if (data.masteredTopics && data.masteredTopics.length > 0) {
-    data.masteredTopics.forEach(topic => {
-      const li = document.createElement("li");
-      li.textContent = topic;
-      masteredList.appendChild(li);
-    });
-  } else {
-    const li = document.createElement("li");
-    li.textContent = "(Nav apgūtu tēmu)";
-    masteredList.appendChild(li);
-  }
-
-  updateCrownDisplay(data.masteredTopics);
+  console.log("reloadMasteredTopics saņēma:", data.masteredTopics);
+  populateMasteredTopics(data.masteredTopics);
 }
 
-function resetChat() {
+document.getElementById("resetBtn").addEventListener("click", () => {
   messages = [];
   languageLocked = false;
-
   document.getElementById("output").textContent = "";
   document.getElementById("input").value = "";
   document.getElementById("language").value = "";
@@ -318,17 +309,12 @@ function resetChat() {
   document.getElementById("language").disabled = false;
   document.getElementById("topic").disabled = false;
   document.getElementById("resetBtn").classList.add("hidden");
-}
+});
 
-document.getElementById("sendBtn").addEventListener("click", sendMessage);
-document.getElementById("resetBtn").addEventListener("click", resetChat);
-document.getElementById("startTestBtn").addEventListener("click", startTest);
-document.getElementById("submitTestBtn").addEventListener("click", submitTest);
+document.getElementById("displayUserId").textContent = getUserId();
 
-document.getElementById('displayUserId').textContent = getUserId();
-
-document.getElementById('btnSetUserId').addEventListener('click', () => {
-  const inputUserId = document.getElementById('inputUserId').value.trim();
+document.getElementById("btnSetUserId").addEventListener("click", () => {
+  const inputUserId = document.getElementById("inputUserId").value.trim();
   if (inputUserId) {
     localStorage.setItem('userId', inputUserId);
     alert("Lietotāja ID iestatīts! Lapa tiks pārlādēta, lai ielādētu Tavu sesiju.");
@@ -338,11 +324,7 @@ document.getElementById('btnSetUserId').addEventListener('click', () => {
   }
 });
 
-document.getElementById('toggleUserIdSection').addEventListener('click', () => {
-  const section = document.getElementById('userIdSection');
-  if (section.style.display === 'none' || section.style.display === '') {
-    section.style.display = 'block';
-  } else {
-    section.style.display = 'none';
-  }
+document.getElementById("toggleUserIdSection").addEventListener("click", () => {
+  const section = document.getElementById("userIdSection");
+  section.style.display = (getComputedStyle(section).display === 'none') ? 'block' : 'none';
 });
