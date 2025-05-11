@@ -1,3 +1,5 @@
+// server.js - PostgreSQL versija
+
 const express = require("express");
 const rateLimit = require("express-rate-limit");
 const { v4: uuidv4 } = require('uuid');
@@ -6,8 +8,6 @@ require("dotenv").config();
 const fs = require('fs');
 const path = require('path');
 const OpenAI = require("openai");
-const oracledb = require("oracledb");
-oracledb.fetchAsString = [oracledb.CLOB];
 
 const jsonPath = path.join(__dirname, 'public', 'topics.json');
 const topicsData = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
@@ -32,8 +32,6 @@ app.use('/api', apiLimiter);
 let dbAvailable = true;
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// ===== PALĪGFUNKCIJAS =====
-
 function validateRequestBody(body) {
   const { messages, languageInput, userId, sessionId, topic } = body;
   if (messages) {
@@ -50,44 +48,30 @@ function validateRequestBody(body) {
 }
 
 async function withDB(callback) {
-  let db;
+  const db = await connectToDB();
   try {
-    console.log("[withDB] Savienojos ar DB...");
-    db = await connectToDB();
     await callback(db);
-    await db.commit();
-    console.log("[withDB] Commit izpildīts.");
-  } catch (err) {
-    console.error("[withDB] Kļūda:", err);
-    dbAvailable = false;
-    throw err;
   } finally {
-    if (db) {
-      await db.close();
-      console.log("🔒 [withDB] Savienojums aizvērts.");
-    }
+    db.release();
   }
 }
 
 async function getMasteredTopics(userId, db) {
-  const res = await db.execute(`SELECT Topic FROM PROGRESS WHERE User_ID = :user_id AND Mastered = 1`, { user_id: userId });
-  return res.rows.map(row => row[0]);
+  const res = await db.query(`SELECT Topic FROM PROGRESS WHERE User_ID = $1 AND Mastered = true`, [userId]);
+  return res.rows.map(row => row.topic);
 }
 
 async function getLastSession(userId, db) {
-  const res = await db.execute(
-    `SELECT Session_ID FROM SESSIONS WHERE User_ID = :user_id ORDER BY Created_At DESC FETCH FIRST 1 ROWS ONLY`,
-    { user_id: userId }
-  );
-  return res.rows.length > 0 ? res.rows[0][0] : null;
+  const res = await db.query(`SELECT Session_ID FROM SESSIONS WHERE User_ID = $1 ORDER BY Created_At DESC LIMIT 1`, [userId]);
+  return res.rows.length > 0 ? res.rows[0].session_id : null;
 }
 
 async function saveMessagesBatch(db, sessionId, messages) {
   for (const msg of messages) {
-    await db.execute(
+    await db.query(
       `INSERT INTO MESSAGES (Message_ID, Session_ID, Role, Content, Created_At)
-       VALUES (:msg_id, :session_id, :role, :content, SYSTIMESTAMP)`,
-      { msg_id: uuidv4(), session_id: sessionId, role: msg.role, content: msg.content }
+       VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)`,
+      [uuidv4(), sessionId, msg.role, msg.content]
     );
   }
 }
@@ -101,7 +85,7 @@ function buildSystemPrompt(topic, languageInput, masteredTopics) {
 The student has already mastered the following topics: ${masteredTopics.join(', ')}.` +
       (isCurrentTopicMastered
         ? ` The current topic (${topic}) is already mastered. Do NOT explain it again from scratch. Instead, offer comparisons, deeper insights, or advanced questions to challenge understanding.`
-        : ` Since ${topic} may be related to some mastered topics, you are encouraged to explain it by comparing with those mastered topics, focusing on differences, nuances, and what is new.`);
+        : ` Although ${topic} is related to some mastered topics, it has NOT been mastered yet. Therefore, you must still explain it clearly and from scratch, but you may use comparisons to known topics like (${masteredTopics.join(', ')}) to aid understanding.`);
 
     masteryBlock += `
 
@@ -150,10 +134,8 @@ Your responsibilities:
   return systemPrompt;
 }
 
-// ===== API =====
-
 app.post("/api/start-session", async (req, res) => {
-  console.log("📥 [API] /api/start-session:", req.body);
+  console.log("[API] /api/start-session:", req.body);
   const validationError = validateRequestBody(req.body);
   if (validationError) return res.status(400).json({ error: `Datu validācija: ${validationError}` });
 
@@ -161,83 +143,66 @@ app.post("/api/start-session", async (req, res) => {
   const newSessionId = uuidv4();
 
   try {
-    if (dbAvailable) {
-      await withDB(async (db) => {
-        await db.execute(
-          `MERGE INTO USERS u USING dual ON (u.User_ID = :user_id)
-           WHEN NOT MATCHED THEN INSERT (User_ID, Language, Topic)
-           VALUES (:user_id, :language, :topic)
-           WHEN MATCHED THEN UPDATE SET Language = :language, Topic = :topic`,
-          { user_id: userId, language: languageInput, topic }
-        );
-        await db.execute(
-          `INSERT INTO SESSIONS (Session_ID, User_ID, Created_At) VALUES (:session_id, :user_id, SYSTIMESTAMP)`,
-          { session_id: newSessionId, user_id: userId }
-        );
-      });
-    }
-    res.json({ sessionId: newSessionId, mode: dbAvailable ? "online" : "offline" });
+    await withDB(async (db) => {
+      await db.query(
+        `INSERT INTO USERS (User_ID, Language, Topic)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (User_ID) DO UPDATE SET Language = EXCLUDED.Language, Topic = EXCLUDED.Topic`,
+        [userId, languageInput, topic]
+      );
+      await db.query(`INSERT INTO SESSIONS (Session_ID, User_ID, Created_At) VALUES ($1, $2, CURRENT_TIMESTAMP)`, [newSessionId, userId]);
+    });
+    res.json({ sessionId: newSessionId, mode: "online" });
   } catch (err) {
     console.error("/api/start-session kļūda:", err);
+    dbAvailable = false;
     res.json({ sessionId: newSessionId, mode: "offline" });
   }
 });
 
 app.post("/api/load-session", async (req, res) => {
-  console.log("📥 [API] /api/load-session:", req.body);
+  console.log("[API] /api/load-session:", req.body);
   const { userId } = req.body;
   if (typeof userId !== 'string') return res.status(400).json({ error: 'userId jābūt tekstam.' });
 
   try {
-    if (dbAvailable) {
-      let sessionId, messages = [], masteredTopics = [], userInfo;
-      await withDB(async (db) => {
-        sessionId = await getLastSession(userId, db);
-        if (!sessionId) {
-          console.log(`[load-session] Nav sesijas userId: ${userId}`);
-          return res.json({ messages: [], mode: "online", masteredTopics: [] });
-        }
+    let sessionId, messages = [], masteredTopics = [], userInfo;
+    await withDB(async (db) => {
+      sessionId = await getLastSession(userId, db);
+      if (!sessionId) return res.json({ messages: [], mode: "online", masteredTopics: [] });
 
-        const msgRes = await db.execute(`SELECT Role, Content FROM MESSAGES WHERE Session_ID = :session_id ORDER BY Created_At`, { session_id: sessionId });
-        const userRes = await db.execute(`SELECT Language, Topic FROM USERS WHERE User_ID = :user_id`, { user_id: userId });
+      const msgRes = await db.query(`SELECT Role, Content FROM MESSAGES WHERE Session_ID = $1 ORDER BY Created_At`, [sessionId]);
+      const userRes = await db.query(`SELECT Language, Topic FROM USERS WHERE User_ID = $1`, [userId]);
 
-        if (userRes.rows.length === 0) {
-          console.log(`[load-session] Nav ieraksta USERS tabulā priekš userId: ${userId}`);
-          return res.json({ messages: [], mode: "online", masteredTopics: [] });
-        }
+      if (userRes.rows.length === 0) return res.json({ messages: [], mode: "online", masteredTopics: [] });
 
-        masteredTopics = await getMasteredTopics(userId, db);
-        messages = msgRes.rows.map(row => ({ role: String(row[0]), content: String(row[1]) }));
-        userInfo = userRes.rows[0];
-      });
+      masteredTopics = await getMasteredTopics(userId, db);
+      messages = msgRes.rows.map(row => ({ role: row.role, content: row.content }));
+      userInfo = userRes.rows[0];
+    });
 
-      res.json({ messages, language: userInfo[0], topic: userInfo[1], sessionId, masteredTopics, mode: "online" });
-    } else {
-      res.json({ messages: [], mode: "offline", masteredTopics: [] });
-    }
+    res.json({ messages, language: userInfo.language, topic: userInfo.topic, sessionId, masteredTopics, mode: "online" });
   } catch (err) {
     console.error("/api/load-session kļūda:", err);
     res.json({ messages: [], mode: "offline", masteredTopics: [] });
   }
 });
 
-
 app.post("/api/chat", async (req, res) => {
-  console.log("📥 [API] /api/chat:", req.body);
+  console.log("[API] /api/chat:", req.body);
   const validationError = validateRequestBody(req.body);
   if (validationError) return res.status(400).json({ error: `Datu validācija: ${validationError}` });
 
   const { messages, languageInput, userId, sessionId, topic } = req.body;
   let masteredTopics = [];
 
-  if (dbAvailable) {
-    try {
-      await withDB(async (db) => {
-        masteredTopics = await getMasteredTopics(userId, db);
-      });
-    } catch (err) {
-      console.error("Kļūda iegūstot masteredTopics:", err);
-    }
+  try {
+    await withDB(async (db) => {
+      masteredTopics = await getMasteredTopics(userId, db);
+    });
+  } catch (err) {
+    console.error("Kļūda iegūstot masteredTopics:", err);
+    dbAvailable = false;
   }
 
   const systemPrompt = buildSystemPrompt(topic, languageInput, masteredTopics);
@@ -247,16 +212,14 @@ app.post("/api/chat", async (req, res) => {
     const response = await openai.chat.completions.create({ model: "gpt-4-turbo", messages: fullMessages });
     const assistantReply = response.choices[0].message.content;
 
-    if (dbAvailable) {
-      try {
-        await withDB(async (db) => {
-          await saveMessagesBatch(db, sessionId, messages);
-          await saveMessagesBatch(db, sessionId, [{ role: "assistant", content: assistantReply }]);
-        });
-      } catch (err) {
-        console.error("Kļūda saglabājot ziņas:", err);
-        dbAvailable = false;
-      }
+    try {
+      await withDB(async (db) => {
+        await saveMessagesBatch(db, sessionId, messages);
+        await saveMessagesBatch(db, sessionId, [{ role: "assistant", content: assistantReply }]);
+      });
+    } catch (err) {
+      console.error("Kļūda saglabājot ziņas:", err);
+      dbAvailable = false;
     }
 
     res.json({ reply: assistantReply, mode: dbAvailable ? "online" : "offline" });
@@ -293,16 +256,16 @@ app.post("/api/submit-test", async (req, res) => {
   const correctCount = answers.filter(a => a.isCorrect).length;
   const passed = correctCount === answers.length;
 
-  if (passed && dbAvailable) {
+  if (passed) {
     try {
       await withDB(async (db) => {
-        await db.execute(
-          `MERGE INTO PROGRESS p USING dual ON (p.User_ID = :user_id AND p.Topic = :topic)
-           WHEN NOT MATCHED THEN INSERT (Progress_ID, User_ID, Topic, Mastered, Updated_At)
-           VALUES (:progress_id, :user_id, :topic, 1, SYSTIMESTAMP)
-           WHEN MATCHED THEN UPDATE SET Mastered = 1, Updated_At = SYSTIMESTAMP`,
-          { progress_id: uuidv4(), user_id: userId, topic }
+        await db.query(
+          `INSERT INTO progress (progress_id, user_id, topic, mastered, updated_at)
+          VALUES ($1, $2, $3, true, CURRENT_TIMESTAMP)
+          ON CONFLICT (user_id, topic) DO UPDATE SET mastered = true, updated_at = CURRENT_TIMESTAMP`,
+          [uuidv4(), userId, topic]
         );
+
       });
     } catch (err) {
       console.error("Kļūda saglabājot progresu:", err);

@@ -208,6 +208,10 @@ document.getElementById("sendBtn").addEventListener("click", async () => {
     sessionId = startData.sessionId;
   }
 
+  if (sessionId) {
+    document.getElementById("startTestBtn").classList.remove("hidden");
+  }
+
   messages.push({ role: "user", content: userInput });
   appendOutput("Tu", userInput);
 
@@ -302,6 +306,7 @@ async function reloadMasteredTopics() {
 document.getElementById("resetBtn").addEventListener("click", () => {
   messages = [];
   languageLocked = false;
+  sessionId = null;
   document.getElementById("output").textContent = "";
   document.getElementById("input").value = "";
   document.getElementById("language").value = "";
@@ -309,6 +314,7 @@ document.getElementById("resetBtn").addEventListener("click", () => {
   document.getElementById("language").disabled = false;
   document.getElementById("topic").disabled = false;
   document.getElementById("resetBtn").classList.add("hidden");
+  document.getElementById("startTestBtn").classList.add("hidden");
 });
 
 document.getElementById("displayUserId").textContent = getUserId();
