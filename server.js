@@ -24,7 +24,7 @@ app.use(express.json());
 
 const userRateLimiter = rateLimit({
   windowMs: 10 * 60 * 1000, // 10 minūtes
-  max: 3, // max 30 pieprasījumi vienam lietotājam 10 minūtēs
+  max: 50, // max 30 pieprasījumi vienam lietotājam 10 minūtēs
   keyGenerator: (req) => {
     return req.body?.userId || req.ip; // izmanto userId, ja pieejams
   },
