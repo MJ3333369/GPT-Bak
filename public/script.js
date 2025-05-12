@@ -107,13 +107,31 @@ async function postJSON(url, data) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data)
     });
-    return await res.json();
+
+    const contentType = res.headers.get("Content-Type") || "";
+
+    if (!res.ok) {
+      const errMessage = contentType.includes("application/json")
+        ? (await res.json()).message
+        : await res.text();
+      throw new Error(errMessage || "Nezināma kļūda");
+    }
+
+     toggleOfflineBanner(false);
+
+    if (contentType.includes("application/json")) {
+      return await res.json();
+    } else {
+      return { message: await res.text(), mode: "offline" };
+    }
   } catch (err) {
     console.error("Tīkla kļūda:", err);
     toggleOfflineBanner(true);
+    alert("Kļūda: " + err.message); // izvēles iespēja – parādi kļūdu lietotājam
     return { mode: "offline" };
   }
 }
+
 
 function getUserId() {
   let userId = localStorage.getItem("userId");
@@ -127,6 +145,14 @@ function getUserId() {
 // ========================== GALVENĀ IELĀDE ============================
 
 window.addEventListener("load", async () => {
+  // Automātiski ielādē studentCode no localStorage, ja tāds ir
+  const savedStudentCode = localStorage.getItem("studentCode");
+  if (savedStudentCode) {
+    const input = document.getElementById("studentCode");
+    input.value = savedStudentCode;
+    input.disabled = true;
+  }
+
   const response = await fetch("/topics.json");
   const topicsData = await response.json();
   window.allTopics = topicsData.topics.map(t => t.id);
@@ -182,6 +208,32 @@ window.addEventListener("load", async () => {
 // ========================== EVENT HANDLERI ============================
 
 document.getElementById("sendBtn").addEventListener("click", async () => {
+    const studentCode = document.getElementById("studentCode").value.trim();
+  if (!studentCode) {
+    alert("Lūdzu, ievadi studenta apliecības numuru!");
+    sendButton.disabled = false;
+    return;
+  }
+
+  if (!localStorage.getItem("studentCode")) {
+    const result = await postJSON("/api/check-student-code", { studentCode });
+
+    if (result.error) {
+      alert("Kļūda pārbaudot apliecības numuru.");
+      sendButton.disabled = false;
+      return;
+    }
+
+    if (result.exists) {
+      alert("Šāds apliecības numurs jau ir reģistrēts. Varat turpināt.");
+    } else {
+      alert("Studenta apliecības numurs reģistrēts.");
+    }
+
+    localStorage.setItem("studentCode", studentCode);
+    document.getElementById("studentCode").disabled = true;
+  }
+
   const sendButton = document.getElementById("sendBtn");
   const startTestButton = document.getElementById("startTestBtn");
   sendButton.disabled = true;

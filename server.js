@@ -22,12 +22,14 @@ app.use(helmet());
 app.use(express.static("public"));
 app.use(express.json());
 
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 50,
-  message: 'Pārāk daudz pieprasījumu no šīs IP. Mēģini vēlreiz pēc 15 minūtēm.'
+const userRateLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minūtes
+  max: 3, // max 30 pieprasījumi vienam lietotājam 10 minūtēs
+  keyGenerator: (req) => {
+    return req.body?.userId || req.ip; // izmanto userId, ja pieejams
+  },
+  message: 'Pārāk daudz pieprasījumu no šī lietotāja. Mēģini vēlreiz pēc 10 minūtēm.'
 });
-app.use('/api', apiLimiter);
 
 let dbAvailable = true;
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -81,58 +83,73 @@ function buildSystemPrompt(topic, languageInput, masteredTopics) {
   let masteryBlock = '';
 
   if (masteredTopics.length > 0) {
-    masteryBlock = `
-The student has already mastered the following topics: ${masteredTopics.join(', ')}.` +
-      (isCurrentTopicMastered
-        ? ` The current topic (${topic}) is already mastered. Do NOT explain it again from scratch. Instead, offer comparisons, deeper insights, or advanced questions to challenge understanding.`
-        : ` Although ${topic} is related to some mastered topics, it has NOT been mastered yet. Therefore, you must still explain it clearly and from scratch, but you may use comparisons to known topics like (${masteredTopics.join(', ')}) to aid understanding.`);
+          masteryBlock = `
+      The student has already mastered the following topics: ${masteredTopics.join(', ')}.` +
+            (isCurrentTopicMastered
+              ? ` The current topic (${topic}) is already mastered. Do NOT explain it again from scratch. Instead, offer comparisons, deeper insights, or advanced questions to challenge understanding.`
+              : ` Although ${topic} is related to some mastered topics, it has NOT been mastered yet. Therefore, you must still explain it clearly and from scratch, but you may use comparisons to known topics like (${masteredTopics.join(', ')}) to aid understanding.`);
 
-    masteryBlock += `
+          masteryBlock += `
 
-You are allowed to reference or compare with any of the mastered topics (${masteredTopics.join(', ')}), even if they are not the current topic, to support deeper understanding.
-`;
-  } else {
-    masteryBlock = `
-The student has not yet mastered any topics.
-Do NOT assume prior knowledge of ${topic}.
-Explain ${topic} from scratch, using beginner-friendly language and examples.
-Avoid advanced explanations or comparisons to other topics.
-`;
-  }
+      You are allowed to reference or compare with any of the mastered topics (${masteredTopics.join(', ')}), even if they are not the current topic, to support deeper understanding.
+      `;
+    } else {
+      masteryBlock = `
+      The student has not yet mastered any topics.
+      Do NOT assume prior knowledge of ${topic}.
+      Explain ${topic} from scratch, using beginner-friendly language and examples.
+      Avoid advanced explanations or comparisons to other topics.
+      `;
+    }
 
-  const related = topicRelations[topic] || [];
-  const relatedText = related.length > 0
-    ? `\nNote: ${topic} is closely related to: ${related.join(', ')}. Feel free to reference or compare with these topics where appropriate.`
-    : "";
+    const related = topicRelations[topic] || [];
+    const knownRelated = related.filter(t => masteredTopics.includes(t));
+    const unknownRelated = related.filter(t => !masteredTopics.includes(t));
 
-  const systemPrompt = `
-${masteryBlock}${relatedText}
+    let relatedText = '';
 
-You are a helpful and insightful virtual tutor specialized in ${topic}.
+    if (knownRelated.length > 0) {
+      relatedText += `
+      The current topic (${topic}) is closely related to the following mastered topics: ${knownRelated.join(', ')}.
+      You MUST actively use these mastered topics (${knownRelated.join(', ')}) to support the explanation.
+      Use comparisons, analogies, references or transitions from these known topics to explain new concepts.`;
+    }
 
-IMPORTANT:
-- If the student asks about ${topic} and it is already mastered, you MUST NOT explain ${topic} again from scratch.
-- Instead, you should offer comparisons, ask advanced questions, or provide challenging exercises.
-- If the student asks about other mastered topics, you may freely discuss them.
-- If the student asks about unmastered topics, politely inform them they have not mastered those yet and suggest first covering ${topic}.
+    if (unknownRelated.length > 0) {
+      relatedText += `
+      DO NOT assume the student knows the following related topics: ${unknownRelated.join(', ')}.
+      Avoid referencing or comparing with these topics unless the student explicitly asks.`;
+    }
 
-The student is learning in ${languageInput}.
-Please explain everything in Latvian.
+    const systemPrompt = `
+  ${masteryBlock}${relatedText}
 
-Your responsibilities:
-- Always explain which type of search algorithm it is (uninformed or informed).
-- Specify the category or class the algorithm belongs to (e.g., heuristic search, graph search).
-- NEVER provide complete code solutions or fully runnable programs.
-- You ARE allowed to provide pseudocode, partial code snippets, or code examples with intentional gaps or placeholders.
-- Focus on helping the student understand how to write code step by step, explaining the logic and structure behind each part.
-- You may comment on the student’s submitted code, suggest improvements, identify bugs, or explain unclear parts.
-- Avoid handing out ready-to-use solutions, but always guide the student towards writing their own correct code.
-- Encourage reflection with topic-specific or related-topic questions.
-- Always tailor explanations based on the student's mastered knowledge.
-`;
+  You are a helpful and insightful virtual tutor specialized in ${topic}.
 
-  return systemPrompt;
+  IMPORTANT:
+  - If the student asks about ${topic} and it is already mastered, you MUST NOT explain ${topic} again from scratch.
+  - Instead, you should offer comparisons, ask advanced questions, or provide challenging exercises.
+  - If the student asks about other mastered topics, you may freely discuss them.
+  - If the student asks about unmastered topics, politely inform them they have not mastered those yet and suggest first covering ${topic}.
+
+  The student is learning in ${languageInput}.
+  Please explain everything in Latvian.
+
+  Your responsibilities:
+  - Always explain which type of search algorithm it is (uninformed or informed).
+  - Specify the category or class the algorithm belongs to (e.g., heuristic search, graph search).
+  - NEVER provide complete code solutions or fully runnable programs.
+  - You ARE allowed to provide pseudocode, partial code snippets, or code examples with intentional gaps or placeholders.
+  - Focus on helping the student understand how to write code step by step, explaining the logic and structure behind each part.
+  - You may comment on the student’s submitted code, suggest improvements, identify bugs, or explain unclear parts.
+  - Avoid handing out ready-to-use solutions, but always guide the student towards writing their own correct code.
+  - Encourage reflection with topic-specific or related-topic questions.
+  - Always tailor explanations based on the student's mastered knowledge.
+  `;
+
+    return systemPrompt;
 }
+
 
 app.post("/api/start-session", async (req, res) => {
   console.log("[API] /api/start-session:", req.body);
@@ -188,7 +205,7 @@ app.post("/api/load-session", async (req, res) => {
   }
 });
 
-app.post("/api/chat", async (req, res) => {
+app.post("/api/chat", userRateLimiter, async (req, res) => {
   console.log("[API] /api/chat:", req.body);
   const validationError = validateRequestBody(req.body);
   if (validationError) return res.status(400).json({ error: `Datu validācija: ${validationError}` });
@@ -229,17 +246,45 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
-app.post("/api/get-test", async (req, res) => {
+app.post("/api/get-test", userRateLimiter, async (req, res) => {
   console.log("[API] /api/get-test:", req.body);
   const { topic, languageInput } = req.body;
-  if (typeof topic !== 'string' || typeof languageInput !== 'string') return res.status(400).json({ error: 'Nepieciešami topic un languageInput kā teksts.' });
+
+  if (typeof topic !== 'string' || typeof languageInput !== 'string') {
+    return res.status(400).json({ error: 'Nepieciešami topic un languageInput kā teksts.' });
+  }
 
   try {
-    const prompt = `Lūdzu, izveido 5 jautājumu izvēles testu LATVIEŠU valodā par tēmu "${topic}" programmēšanas valodā ${languageInput}.
-Katram jautājumam jābūt ar 4 atbildes variantiem (A, B, C, D) un jānorāda pareizā atbilde (burts).
-Atgriez tikai JSON: [{"question":"...","options":{"A":"...","B":"...","C":"...","D":"..."},"correct":"B"}]`;
+    const prompt = `
+Tu esi palīdzības rīks, kas ģenerē TESTA jautājumus LATVIEŠU valodā par tēmu "${topic}" programmēšanas valodā ${languageInput}.
+Tava mērķis ir pārbaudīt lietotāja spēju izprast algoritma darbību, loģiku un kļūdu atpazīšanu kodā.
 
-    const response = await openai.chat.completions.create({ model: "gpt-4-turbo", messages: [{ role: "system", content: prompt }] });
+Seko šiem norādījumiem:
+- Izveido 5 jautājumus ar 4 atbilžu variantiem (A, B, C, D), un atzīmē vienu pareizo.
+- Jautājumiem jābūt SAISTĪTIEM ar konkrēto algoritma loģiku vai programmēšanu, nevis vispārīgu teoriju.
+- Vari izmantot īsus koda fragmentus, piemēram pseudokodā vai kādā vienkāršā valodā (piemēram, Python stilā).
+- Dažiem jautājumiem jāietver: "kas notiks ar šo kodu?", "kāda ir pareizā rinda?", "kurā gadījumā algoritms atgriež šo rezultātu?" utt.
+- Izvairies no jautājumiem par definīcijām vai tikai terminoloģiju.
+- Atbildi TIKAI ar derīgu JSON šādā struktūrā:
+[
+  {
+    "question": "Jautājuma teksts",
+    "options": {
+      "A": "Atbilde A",
+      "B": "Atbilde B",
+      "C": "Atbilde C",
+      "D": "Atbilde D"
+    },
+    "correct": "B"
+  }
+]
+`;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4-turbo",
+      messages: [{ role: "system", content: prompt }]
+    });
+
     const test = JSON.parse(response.choices[0].message.content);
     res.json({ test });
   } catch (err) {
@@ -247,6 +292,7 @@ Atgriez tikai JSON: [{"question":"...","options":{"A":"...","B":"...","C":"...",
     res.status(500).json({ error: "Kļūda ģenerējot testu vai parsējot JSON." });
   }
 });
+
 
 app.post("/api/submit-test", async (req, res) => {
   console.log("[API] /api/submit-test:", req.body);
@@ -274,6 +320,37 @@ app.post("/api/submit-test", async (req, res) => {
 
   res.json({ result: passed ? "Passed" : "Failed", correct: correctCount, total: answers.length });
 });
+
+app.post("/api/check-student-code", async (req, res) => {
+  const { studentCode } = req.body;
+  if (!studentCode || typeof studentCode !== 'string') {
+    return res.status(400).json({ error: "Nederīgs studenta kods." });
+  }
+
+  try {
+    let exists = false;
+    await withDB(async (db) => {
+      const result = await db.query(
+        `SELECT 1 FROM student_codes WHERE student_code = $1 LIMIT 1`,
+        [studentCode]
+      );
+      exists = result.rowCount > 0;
+
+      if (!exists) {
+        await db.query(
+          `INSERT INTO student_codes (student_code) VALUES ($1)`,
+          [studentCode]
+        );
+      }
+    });
+
+    res.json({ exists });
+  } catch (err) {
+    console.error("Kļūda pārbaudot/saglabājot studenta kodu:", err);
+    res.status(500).json({ error: "Kļūda serverī." });
+  }
+});
+
 
 app.listen(port, () => {
   console.log(`Serveris darbojas uz http://localhost:${port}`);
